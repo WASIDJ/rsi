@@ -106,6 +106,7 @@ make clean
 | `rsi node rm <name>` | Removes node from `custom_nodes.yaml` -> rebuilds `config.yaml` -> API reload. |
 | `rsi chnroute [update\|status]` | Updates or displays the `chnroute` ipset (4,290+ domestic subnets) for hardware bypass. |
 | `rsi firewall [apply\|status]` | Inspects iptables `MH_ROUTE` packet counters and Broadcom Flow Cache hardware state. |
+| `rsi client [status\|mode\|add\|rm]` | Manages intercepted clients in `/jffs/mihomo/clients.txt` (`home` vs `company` mode). |
 | `rsi reload` | Re-merges cached subscription with custom nodes and calls API `PUT /configs`. |
 | `rsi status` | Reads `/tmp/mihomo/core.pid`, `/proc/<pid>/status` (VmRSS, Threads), and queries `GET /version`. |
 | `rsi log [-n lines] [-f]` | Tails `/tmp/mihomo/core.log` (RAM-bounded log file). |

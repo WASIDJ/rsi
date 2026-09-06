@@ -85,6 +85,13 @@ rsi chnroute update
 rsi firewall status
 rsi firewall apply
 
+# 局域网分流拦截管理 (居家全直连 / 公司全代理 一键切换)
+rsi client status                # 查看当前拦截名单与生效条目
+rsi client mode home             # 切换居家模式 (全屋直连，不代理)
+rsi client mode company          # 切换公司模式 (代理 192.168.50.0/24 全网段)
+rsi client add 192.168.50.219   # 单独指定仅代理指定测试机
+rsi client rm 192.168.50.219    # 移除指定设备代理
+
 # 重新验证并热重载当前配置
 rsi reload
 

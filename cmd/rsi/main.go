@@ -47,6 +47,7 @@ Usage:
 
   rsi chnroute [update|status] 更新/查看国内直连 IP 规则集与硬件加速旁路
   rsi firewall [apply|status]   重新应用或查看防火墙分流与流缓存状态
+  rsi client [status|mode|add|rm] 局域网分流拦截管理 (支持 home/company 模式一键切换)
 
   rsi reload                 重新验证并热重载当前配置 (0 断流, < 0.2s)
   rsi status                 查看服务状态、PID、内存、节点与策略组信息
@@ -116,6 +117,8 @@ func main() {
 		handleChnroute(os.Args[2:])
 	case "firewall":
 		handleFirewall(os.Args[2:])
+	case "client", "clients":
+		handleClient(os.Args[2:])
 	case "reload":
 		handleReload()
 	case "status":
@@ -536,4 +539,122 @@ func handleFirewall(args []string) {
 		fmt.Println("Usage: rsi firewall [apply|status]")
 	}
 }
+
+func handleClient(args []string) {
+	subcmd := "status"
+	if len(args) > 0 {
+		subcmd = args[0]
+	}
+	clientsPath := "/jffs/mihomo/clients.txt"
+
+	switch subcmd {
+	case "status", "list":
+		fmt.Println("=== 局域网分流拦截名单 (/jffs/mihomo/clients.txt) ===")
+		content, err := os.ReadFile(clientsPath)
+		if err != nil {
+			fmt.Printf("[-] 读取 clients.txt 失败: %v\n", err)
+			return
+		}
+		activeClients := []string{}
+		for _, line := range strings.Split(string(content), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			activeClients = append(activeClients, line)
+		}
+		if len(activeClients) == 0 {
+			fmt.Println("当前状态: [居家测试 / 全直连模式] (未拦截任何设备，全内网直连 WAN)")
+		} else {
+			fmt.Printf("当前拦截设备 (%d 个条目):\n", len(activeClients))
+			for _, c := range activeClients {
+				fmt.Printf("  • %s\n", c)
+			}
+		}
+		fmt.Println("\n=== 内核 ipset mh_clients 实时生效成员 ===")
+		out, _ := exec.Command("ipset", "list", "mh_clients").CombinedOutput()
+		fmt.Print(string(out))
+
+	case "mode":
+		if len(args) < 2 {
+			fmt.Println("用法: rsi client mode <home|company|all>")
+			return
+		}
+		mode := strings.ToLower(args[1])
+		switch mode {
+		case "home", "direct", "off":
+			header := "# Intercept list empty (Home test / all direct mode)\n"
+			_ = os.WriteFile(clientsPath, []byte(header), 0644)
+			fmt.Println("[*] 已切换至 [居家模式]：清空代理名单，全屋设备直连 WAN，0 拦截。")
+		case "company", "all", "on":
+			content := "# Intercept entire LAN subnet\n192.168.50.0/24\n"
+			_ = os.WriteFile(clientsPath, []byte(content), 0644)
+			fmt.Println("[*] 已切换至 [公司/全网模式]：拦截 192.168.50.0/24 全网段。")
+		default:
+			fmt.Printf("[-] 未知模式: %s (可选: home, company)\n", mode)
+			return
+		}
+		cmd := exec.Command("/jffs/mihomo/firewall.sh", "apply")
+		_ = cmd.Run()
+		fmt.Println("[✓] 防火墙已热重载。")
+
+	case "add":
+		if len(args) < 2 {
+			fmt.Println("用法: rsi client add <IP或网段, 如 192.168.50.219>")
+			return
+		}
+		target := strings.TrimSpace(args[1])
+		if !strings.HasPrefix(target, "192.168.50.") {
+			fmt.Println("[-] 仅允许添加 192.168.50.x 局域网地址")
+			return
+		}
+		content, _ := os.ReadFile(clientsPath)
+		lines := strings.Split(string(content), "\n")
+		for _, l := range lines {
+			if strings.TrimSpace(l) == target {
+				fmt.Printf("[!] 设备 %s 已经在名单中\n", target)
+				return
+			}
+		}
+		lines = append(lines, target)
+		_ = os.WriteFile(clientsPath, []byte(strings.Join(lines, "\n")), 0644)
+		cmd := exec.Command("/jffs/mihomo/firewall.sh", "apply")
+		_ = cmd.Run()
+		fmt.Printf("[✓] 已添加 %s 到拦截名单并热重载防火墙。\n", target)
+
+	case "rm", "del", "remove":
+		if len(args) < 2 {
+			fmt.Println("用法: rsi client rm <IP或网段, 如 192.168.50.219>")
+			return
+		}
+		target := strings.TrimSpace(args[1])
+		content, _ := os.ReadFile(clientsPath)
+		newLines := []string{}
+		found := false
+		for _, l := range strings.Split(string(content), "\n") {
+			if strings.TrimSpace(l) == target {
+				found = true
+				continue
+			}
+			newLines = append(newLines, l)
+		}
+		if !found {
+			fmt.Printf("[-] 名单中未找到 %s\n", target)
+			return
+		}
+		_ = os.WriteFile(clientsPath, []byte(strings.Join(newLines, "\n")), 0644)
+		cmd := exec.Command("/jffs/mihomo/firewall.sh", "apply")
+		_ = cmd.Run()
+		fmt.Printf("[✓] 已从拦截名单移除 %s 并热重载防火墙。\n", target)
+
+	default:
+		fmt.Println("用法:")
+		fmt.Println("  rsi client status                 查看当前拦截名单与 ipset 状态")
+		fmt.Println("  rsi client mode home              切换到居家测试模式 (全直连，不拦截)")
+		fmt.Println("  rsi client mode company           切换到公司模式 (拦截 192.168.50.0/24 全网段)")
+		fmt.Println("  rsi client add <192.168.50.x>     指定拦截单台设备")
+		fmt.Println("  rsi client rm <192.168.50.x>      移除单台设备拦截")
+	}
+}
+
 
