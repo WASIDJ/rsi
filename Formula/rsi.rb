@@ -1,9 +1,9 @@
 class Rsi < Formula
   desc "Mihomo Manager CLI for Routers and Remote Control"
   homepage "https://github.com/WASIDJ/rsi"
-  url "https://github.com/WASIDJ/rsi/archive/refs/tags/v1.0.0.tar.gz"
-  version "1.0.0"
-  sha256 "a0bf68ce7da158867ea4d425e68073b71568bb21c4402dfb449b177c6e419784"
+  url "https://github.com/WASIDJ/rsi/archive/refs/tags/v1.1.0.tar.gz"
+  version "1.1.0"
+  sha256 "ef5729eebc34e3375e7236ed604160623bd4590df86f05a29f256b624f0df59f"
   license "MIT"
 
   depends_on "go" => :build
