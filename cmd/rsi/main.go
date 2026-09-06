@@ -45,6 +45,9 @@ Usage:
   rsi node list              列出当前所有自建节点
   rsi node rm <name>         删除指定名称的自建节点并热重载
 
+  rsi chnroute [update|status] 更新/查看国内直连 IP 规则集与硬件加速旁路
+  rsi firewall [apply|status]   重新应用或查看防火墙分流与流缓存状态
+
   rsi reload                 重新验证并热重载当前配置 (0 断流, < 0.2s)
   rsi status                 查看服务状态、PID、内存、节点与策略组信息
   rsi log [-n lines] [-f]    查看运行日志
@@ -109,6 +112,10 @@ func main() {
 		handleSub(os.Args[2:])
 	case "node":
 		handleNode(os.Args[2:])
+	case "chnroute":
+		handleChnroute(os.Args[2:])
+	case "firewall":
+		handleFirewall(os.Args[2:])
 	case "reload":
 		handleReload()
 	case "status":
@@ -473,3 +480,60 @@ func handleLog(args []string) {
 	cmd.Stderr = os.Stderr
 	_ = cmd.Run()
 }
+
+func handleChnroute(args []string) {
+	subcmd := "status"
+	if len(args) > 0 {
+		subcmd = args[0]
+	}
+	switch subcmd {
+	case "update":
+		fmt.Println("[*] Updating China IP routes (chnroute)...")
+		cmd := exec.Command("/jffs/mihomo/firewall.sh", "update-chnroute")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("[-] Failed to update chnroute: %v\n", err)
+			os.Exit(1)
+		}
+	case "status":
+		out, err := exec.Command("ipset", "list", "chnroute", "-t").CombinedOutput()
+		if err != nil {
+			fmt.Printf("[-] chnroute ipset not active: %v\n", err)
+			return
+		}
+		fmt.Print(string(out))
+	default:
+		fmt.Println("Usage: rsi chnroute [update|status]")
+	}
+}
+
+func handleFirewall(args []string) {
+	subcmd := "status"
+	if len(args) > 0 {
+		subcmd = args[0]
+	}
+	switch subcmd {
+	case "apply", "reload":
+		fmt.Println("[*] Applying firewall rules & flushing hardware flow cache...")
+		cmd := exec.Command("/jffs/mihomo/firewall.sh", "apply")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		_ = cmd.Run()
+	case "status":
+		fmt.Println("=== MH_ROUTE (TPROXY & Hardware Bypass Rules) ===")
+		out, _ := exec.Command("iptables", "-t", "mangle", "-L", "MH_ROUTE", "-v", "-n").CombinedOutput()
+		fmt.Print(string(out))
+		fmt.Println("\n=== Broadcom Flow Cache ===")
+		fcOut, _ := exec.Command("fc", "status").CombinedOutput()
+		for _, line := range strings.Split(string(fcOut), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.Contains(line, "HW Acceleration") || strings.Contains(line, "Flow Learning Enabled") || strings.Contains(line, "Acceleration Mode") {
+				fmt.Println(" ", line)
+			}
+		}
+	default:
+		fmt.Println("Usage: rsi firewall [apply|status]")
+	}
+}
+

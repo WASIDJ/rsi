@@ -72,10 +72,18 @@ rsi node add -f custom_nodes.yaml
 > 任何自建节点加入后，会在面板最顶层自动生成 `⚡ 自建节点` 策略组，并自动插到 `♻️ 手动切换`、`🔎 Google`、`🧲 OpenAI`、`🎬 YouTube` 等核心策略组的候选最顶端。更新机场订阅时，自建节点会被永久保留。
 
 ### 3. 运维与诊断
-
+ 
 ```sh
 # 查看核心运行状态、PID、内存占用 (VmRSS)、自建节点状态
 rsi status
+
+# 查看国内 IP 直连规则集状态或一键热更新
+rsi chnroute status
+rsi chnroute update
+
+# 查看防火墙分流计数与博通 Flow Cache 硬件加速状态
+rsi firewall status
+rsi firewall apply
 
 # 重新验证并热重载当前配置
 rsi reload
