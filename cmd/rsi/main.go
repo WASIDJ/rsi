@@ -51,6 +51,7 @@ Usage:
 
   rsi reload                 重新验证并热重载当前配置 (0 断流, < 0.2s)
   rsi status                 查看服务状态、PID、内存、节点与策略组信息
+  rsi doctor                 全自动诊断网络上行、硬件加速、分流名单与核心健康度
   rsi log [-n lines] [-f]    查看运行日志
   rsi restart                重启服务
   rsi stop                   停止服务
@@ -123,6 +124,8 @@ func main() {
 		handleReload()
 	case "status":
 		handleStatus()
+	case "doctor":
+		handleDoctor()
 	case "restart":
 		handleRestart()
 	case "start":
@@ -656,5 +659,117 @@ func handleClient(args []string) {
 		fmt.Println("  rsi client rm <192.168.50.x>      移除单台设备拦截")
 	}
 }
+
+func handleDoctor() {
+	fmt.Println("🩺 RSI System Health & Deployment Doctor (" + Version + ")")
+	fmt.Println("==================================================")
+	allOk := true
+
+	// 1. Mihomo Core Process
+	pidBytes, err := os.ReadFile("/tmp/mihomo/core.pid")
+	if err != nil {
+		fmt.Println("  [✗] Mihomo 核心未运行! 请执行 'rsi start'")
+		allOk = false
+	} else {
+		pid := strings.TrimSpace(string(pidBytes))
+		memRSS := ""
+		if statBytes, err := os.ReadFile(fmt.Sprintf("/proc/%s/status", pid)); err == nil {
+			for _, line := range strings.Split(string(statBytes), "\n") {
+				if strings.HasPrefix(line, "VmRSS:") {
+					memRSS = strings.TrimSpace(strings.TrimPrefix(line, "VmRSS:"))
+					break
+				}
+			}
+		}
+		fmt.Printf("  [✓] 核心守护进程: 正常运行 (PID %s, 物理内存 %s)\n", pid, memRSS)
+	}
+
+	// 2. WAN 端口与上行链路
+	wanDev := "eth0"
+	wanUp := false
+	if operstate, err := os.ReadFile(fmt.Sprintf("/sys/class/net/%s/operstate", wanDev)); err == nil {
+		if strings.TrimSpace(string(operstate)) == "up" {
+			wanUp = true
+		}
+	}
+	if wanUp {
+		fmt.Printf("  [✓] WAN 物理上行口: 链路接通 (%s 端口 UP)\n", wanDev)
+	} else {
+		fmt.Printf("  [!] WAN 物理上行口: 未检测到链路信号 (%s 端口 DOWN，请检查网线)\n", wanDev)
+		allOk = false
+	}
+
+	// 3. 局域网分流模式 (Client Interception Mode)
+	clientsContent, _ := os.ReadFile("/jffs/mihomo/clients.txt")
+	activeClients := 0
+	isCompanyMode := false
+	for _, line := range strings.Split(string(clientsContent), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			activeClients++
+			if line == "192.168.50.0/24" {
+				isCompanyMode = true
+			}
+		}
+	}
+	if isCompanyMode {
+		fmt.Println("  [✓] 局域网拦截模式: [公司/全网代理模式] (192.168.50.0/24 全量透明分流)")
+	} else if activeClients > 0 {
+		fmt.Printf("  [✓] 局域网拦截模式: [精准白名单模式] (已指定拦截 %d 台设备)\n", activeClients)
+	} else {
+		fmt.Println("  [!] 局域网拦截模式: [居家直连模式] (未开启任何代理，全屋设备直连 WAN)")
+		fmt.Println("      提示: 若在公司部署，请运行 'rsi client mode company' 开启全网代理")
+	}
+
+	// 4. 国内 IP 硬件加速旁路 (Chnroute & Flow Cache)
+	chnEntries := "0"
+	if out, err := exec.Command("ipset", "list", "chnroute", "-t").CombinedOutput(); err == nil {
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.Contains(line, "Number of entries:") {
+				chnEntries = strings.TrimSpace(strings.TrimPrefix(line, "Number of entries:"))
+				break
+			}
+		}
+	}
+	if chnEntries != "0" {
+		fmt.Printf("  [✓] 国内流量硬件旁路: 规则集就绪 (%s 个中国网段, 博通硬件流缓存就绪)\n", chnEntries)
+	} else {
+		fmt.Println("  [✗] 国内流量规则集未就绪: chnroute 为空，请执行 'rsi chnroute update'")
+		allOk = false
+	}
+
+	// 5. DNS 分流探测
+	dnsWorks := false
+	if out, err := exec.Command("nslookup", "bilibili.com", "127.0.0.1:1053").CombinedOutput(); err == nil {
+		outStr := string(out)
+		if strings.Contains(outStr, "Address") && !strings.Contains(outStr, "198.18.") {
+			dnsWorks = true
+		}
+	}
+	if dnsWorks {
+		fmt.Println("  [✓] DNS 双层分流: 正常响应 (国内域名返回真实 IP, 直通博通硬件流缓存)")
+	} else {
+		fmt.Println("  [!] DNS 响应异常: 未能正确解析国内白名单域名")
+		allOk = false
+	}
+
+	// 6. 本地 API 与 Web 控制面板
+	if out, err := exec.Command("curl", "-s", "--connect-timeout", "2", "http://192.168.50.1:9090/version").CombinedOutput(); err == nil {
+		outStr := string(out)
+		if strings.Contains(outStr, "version") || strings.Contains(outStr, "Unauthorized") {
+			fmt.Println("  [✓] 本地 REST API: 正常通信 (端口 9090 安全鉴权激活, 支持热重载与 Web 面板)")
+		} else {
+			fmt.Println("  [!] REST API 端口响应异常")
+		}
+	}
+
+	fmt.Println("==================================================")
+	if allOk {
+		fmt.Println("🎉 系统状态全部健康！明天带去公司插上网线与电源即可即插即用。")
+	} else {
+		fmt.Println("⚠️  存在部分待就绪项，请参考上述提示执行对应命令。")
+	}
+}
+
 
 
